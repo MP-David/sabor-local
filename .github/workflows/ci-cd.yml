@@ -1,0 +1,108 @@
+# Pipeline principal de CI/CD do Sabor Local
+# Commit/PR → Dependências → Qualidade → Testes → Build (artefato)
+name: CI/CD
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Princípio do menor privilégio: cada job pede só o que precisa
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cd-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: 22
+
+jobs:
+  # 1) Dependências + Qualidade + Testes
+  quality:
+    name: Lint, testes e cobertura
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # histórico completo para o SonarQube
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies (lockfile)
+        run: npm ci
+
+      - name: Lint (ESLint)
+        run: npm run lint
+
+      - name: Testes + cobertura (falha abaixo do limite mínimo)
+        run: npm run coverage
+
+      - name: Publicar relatório de cobertura
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 7
+
+      - name: SonarQube Scan + Quality Gate
+        # PRs vindos de forks não recebem secrets; nesse caso a análise é pulada
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          # espera o resultado do Quality Gate: se reprovar, o pipeline para aqui
+          args: >
+            -Dsonar.qualitygate.wait=true
+            -Dsonar.qualitygate.timeout=300
+
+  # 2) Build: gera o artefato (pasta dist/)
+  build:
+    name: Build e artefato
+    runs-on: ubuntu-latest
+    needs: [quality]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build de produção (Vite)
+        run: npm run build
+
+      - name: Registrar informações do build
+        run: |
+          cat > dist/build-info.json <<JSON
+          {
+            "version": "$(node -p "require('./package.json').version")",
+            "commit": "${GITHUB_SHA}",
+            "ref": "${GITHUB_REF_NAME}",
+            "run": "${GITHUB_RUN_NUMBER}",
+            "builtAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          JSON
+          ls -la dist dist/assets
+
+      - name: Publicar artefato do build
+        uses: actions/upload-artifact@v7
+        with:
+          name: sabor-local-dist
+          path: dist/
+          retention-days: 30
