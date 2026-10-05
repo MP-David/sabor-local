@@ -7,7 +7,7 @@ COPY . .
 RUN npm run build
 
 # Etapa 2: servidor web leve, sem root
-FROM nginxinc/nginx-unprivileged:1.29-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 # aplica correções de segurança dos pacotes da imagem base e remove o curl (não é usado)
 USER root
 RUN apk upgrade --no-cache && (apk del --no-cache curl || true)
