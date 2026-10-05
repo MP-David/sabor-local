@@ -1,0 +1,90 @@
+# Monitoramento da aplicação publicada (health check agendado)
+# GitHub Actions → Aplicação publicada → Health Check → Sucesso/Falha (+ Issue automática)
+name: Monitoramento
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # a cada 30 minutos
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: monitor
+  cancel-in-progress: false
+
+env:
+  ISSUE_TITLE: '🚨 Aplicação indisponível (monitoramento)'
+
+jobs:
+  health-check:
+    name: Health check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verificar disponibilidade e conteúdo (com novas tentativas)
+        id: check
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"   # URL do Pages é sempre minúscula
+          repo="${GITHUB_REPOSITORY#*/}"
+          url="https://${owner}.github.io/${repo}/"
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          ok=false
+          for attempt in 1 2 3; do
+            code=$(curl -s -o page.html -w '%{http_code}' --max-time 20 "$url" || echo 000)
+            time=$(curl -s -o /dev/null -w '%{time_total}' --max-time 20 "$url" || echo 0)
+            health=$(curl -s --max-time 20 "${url}health.json" || true)
+            echo "Tentativa $attempt: HTTP $code em ${time}s"
+            if [ "$code" = "200" ] && grep -q "Sabor Local" page.html && echo "$health" | grep -q '"ok"'; then
+              ok=true; break
+            fi
+            sleep 20
+          done
+          echo "status=$ok" >> "$GITHUB_OUTPUT"
+          echo "http_code=$code" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Resultado do monitoramento"
+            echo ""
+            echo "| Item | Valor |"
+            echo "|---|---|"
+            echo "| URL | $url |"
+            echo "| HTTP | $code |"
+            echo "| Tempo de resposta | ${time}s |"
+            echo "| Conteúdo esperado | $( [ "$ok" = true ] && echo 'encontrado ✅' || echo 'ausente ❌' ) |"
+            echo "| Verificado em (UTC) | $(date -u '+%Y-%m-%d %H:%M:%S') |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Abrir issue em caso de indisponibilidade
+        if: steps.check.outputs.status != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          existing=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[0].number')
+          body="O health check falhou em $(date -u '+%Y-%m-%d %H:%M UTC').
+
+          - URL: ${{ steps.check.outputs.url }}
+          - HTTP: ${{ steps.check.outputs.http_code }}
+          - Execução: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "$body"
+          else
+            gh issue create --title "$ISSUE_TITLE" --body "$body"
+          fi
+
+      - name: Fechar issue quando a aplicação voltar
+        if: steps.check.outputs.status == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          for n in $(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number --jq '.[].number'); do
+            gh issue close "$n" --comment "✅ Aplicação voltou a responder em $(date -u '+%Y-%m-%d %H:%M UTC')."
+          done
+
+      - name: Falhar a execução se indisponível
+        if: steps.check.outputs.status != 'true'
+        run: |
+          echo "❌ Aplicação indisponível ou com conteúdo inesperado"
+          exit 1
