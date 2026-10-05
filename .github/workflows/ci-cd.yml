@@ -1,5 +1,5 @@
 # Pipeline principal de CI/CD do Sabor Local
-# Commit/PR → Dependências → Qualidade → Testes → Segurança → Build (artefato)
+# Commit/PR → Dependências → Qualidade → Testes → Segurança → Build (artefato) → Deploy → Smoke test
 name: CI/CD
 
 on:
@@ -144,3 +144,112 @@ jobs:
           name: sabor-local-dist
           path: dist/
           retention-days: 30
+
+      - name: Preparar artefato para o GitHub Pages
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist/
+
+  # 4) Deploy: publica o MESMO artefato no GitHub Pages (somente main)
+  deploy:
+    name: Deploy (GitHub Pages)
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publicar no GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
+
+      - name: Smoke test da versão publicada
+        env:
+          URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          for i in 1 2 3 4 5; do
+            if curl -fsS "$URL" | grep -q "Sabor Local"; then
+              echo "✅ Aplicação publicada respondendo em $URL"
+              curl -fsS "${URL}build-info.json"
+              exit 0
+            fi
+            echo "Tentativa $i falhou, aguardando propagação..."; sleep 15
+          done
+          echo "❌ A aplicação não respondeu após o deploy"; exit 1
+
+  # 5) Docker (bônus): imagem nginx, scan de vulnerabilidades e publicação no GHCR
+  docker:
+    name: Docker (build, scan e publicação)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Metadados da imagem (tags)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=sha-
+            type=ref,event=branch
+            type=ref,event=pr
+
+      - name: Build da imagem (local, para o scan)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          load: true
+          tags: sabor-local:scan
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Teste do container (health check)
+        run: |
+          docker run -d --name app -p 8080:8080 sabor-local:scan
+          for i in $(seq 1 10); do
+            curl -fsS http://localhost:8080/health.json && break
+            sleep 2
+          done
+          curl -fsS http://localhost:8080/ | grep -q "Sabor Local"
+          docker rm -f app
+
+      - name: Scan de vulnerabilidades da imagem (Grype)
+        uses: anchore/scan-action@v7
+        with:
+          image: sabor-local:scan
+          fail-build: true
+          severity-cutoff: critical
+          only-fixed: true
+          output-format: table
+
+      - name: Login no GitHub Container Registry
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publicar imagem no GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
