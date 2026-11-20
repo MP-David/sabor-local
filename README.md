@@ -107,6 +107,7 @@ feature/*  ──PR──▶  develop  ──PR (release)──▶  main  ──
 | `hotfix/<nome>` | Correção urgente em produção | PR para `main` e depois para `develop` |
 
 - **Commits** seguem o [Conventional Commits](https://www.conventionalcommits.org/pt-br/): `feat:`, `fix:`, `ci:`, `test:`, `docs:`, `chore:`.
+- As branches `main` e `develop` têm **proteção de branch** no GitHub: push direto bloqueado e merge só com os checks obrigatórios verdes (`Lint, testes e cobertura`, `Segurança (dependências e segredos)` e `Build e artefato`).
 - **Pull Requests** usam o template em `.github/pull_request_template.md`. O pipeline roda em todo PR e o merge só acontece com os checks verdes.
 - **Versionamento semântico** (SemVer `MAJOR.MINOR.PATCH`): a versão fica no `package.json`, aparece no rodapé da aplicação e no `build-info.json`, e cada release em `main` recebe uma **tag** (`v1.0.0`) e uma **GitHub Release**.
 
@@ -119,6 +120,10 @@ feature/*  ──PR──▶  develop  ──PR (release)──▶  main  ──
 | #3 | `feature/seguranca` | CodeQL, Gitleaks, npm audit, Dependency Review e Dependabot |
 | #4 | `feature/deploy-docker-monitoramento` | Build/artefato, deploy no Pages, Docker e monitoramento |
 | #5 | `develop → main` | Release **v1.0.0** |
+| #15 | `chore/manutencao-dependencias-v1.1.0` | Dependências atualizadas (0 vulnerabilidades), Node 26 LTS, nginx 1.31 e branches protegidas |
+| #16 | `develop → main` | Release **v1.1.0** |
+
+> Os PRs abertos automaticamente pelo **Dependabot** (#6, #7, #10, #11 e #14) foram consolidados no PR #15 e validados pelo pipeline antes do merge.
 
 ## 7. Pipeline CI/CD
 
@@ -252,7 +257,7 @@ O histórico de todas as verificações fica na aba **Actions → Monitoramento*
 
 ## 14. Docker (bônus)
 
-- **`Dockerfile` multi-stage**: `node:22-alpine` faz o build e `nginxinc/nginx-unprivileged` serve o `dist/` na porta **8080**, **sem root**.
+- **`Dockerfile` multi-stage**: `node:26-alpine` faz o build e `nginxinc/nginx-unprivileged:1.31-alpine` serve o `dist/` na porta **8080**, **sem root**.
 - **`nginx.conf`**: cache longo para `/assets`, *fallback* para `index.html` e cabeçalhos de segurança.
 - **`HEALTHCHECK`** consulta `/health.json`.
 - **No pipeline** (job `docker`): build com cache → sobe o container e testa com `curl` → **scan com Grype** (falha em vulnerabilidade crítica corrigível) → **push para o GHCR** na `main` (tags `latest`, `sha-<commit>` e o nome da branch).
@@ -271,18 +276,23 @@ docker run --rm -p 8080:8080 sabor-local
 
 ## 15. Evidências
 
-| Evidência | Imagem |
+Todas as evidências são **execuções reais** e podem ser conferidas diretamente no GitHub:
+
+| Evidência | Onde ver |
 |---|---|
-| Pipeline CI/CD completo (todos os jobs verdes) | ![Pipeline](docs/evidencias/pipeline.png) |
-| Pull Requests e branches | ![Pull Requests](docs/evidencias/pull-requests.png) |
-| Testes e cobertura no pipeline | ![Testes](docs/evidencias/testes-cobertura.png) |
-| SonarQube Cloud: Quality Gate | ![SonarQube](docs/evidencias/sonarqube.png) |
-| Segurança: CodeQL, Gitleaks e npm audit | ![Segurança](docs/evidencias/seguranca.png) |
-| Artefato do build | ![Artefato](docs/evidencias/artefato.png) |
-| Deploy no GitHub Pages | ![Deploy](docs/evidencias/deploy.png) |
-| Monitoramento (execução agendada) | ![Monitoramento](docs/evidencias/monitoramento.png) |
-| Imagem no GHCR (Docker) | ![Docker](docs/evidencias/docker.png) |
-| Aplicação publicada | ![Aplicação](docs/evidencias/aplicacao.png) |
+| Pipeline CI/CD (todos os jobs) | [Actions → CI/CD](https://github.com/MP-David/sabor-local/actions/workflows/ci-cd.yml) |
+| Pull Requests e branches | [Pull Requests](https://github.com/MP-David/sabor-local/pulls?q=is%3Apr) · [Branches](https://github.com/MP-David/sabor-local/branches) |
+| Testes e cobertura | Job *Lint, testes e cobertura* + artefato `coverage-report` em cada execução |
+| SonarQube Cloud: Quality Gate | [SonarQube Cloud](https://sonarcloud.io/summary/new_code?id=MP-David_sabor-local) |
+| SAST (CodeQL) | [Actions → CodeQL](https://github.com/MP-David/sabor-local/actions/workflows/codeql.yml) · [Security](https://github.com/MP-David/sabor-local/security) |
+| Dependências (Dependabot) | [PRs do Dependabot](https://github.com/MP-David/sabor-local/pulls?q=is%3Apr+author%3Aapp%2Fdependabot) |
+| Artefato do build | Artefato `sabor-local-dist` na página de cada execução do CI/CD |
+| Deploy no GitHub Pages | [Ambiente github-pages](https://github.com/MP-David/sabor-local/deployments/github-pages) |
+| Versão publicada | [build-info.json](https://mp-david.github.io/sabor-local/build-info.json) · [health.json](https://mp-david.github.io/sabor-local/health.json) |
+| Monitoramento (execuções agendadas) | [Actions → Monitoramento](https://github.com/MP-David/sabor-local/actions/workflows/monitor.yml) · [Issues abertas pelo monitor](https://github.com/MP-David/sabor-local/issues?q=is%3Aissue+%22Aplica%C3%A7%C3%A3o+indispon%C3%ADvel%22) |
+| Imagem Docker no GHCR | [Packages](https://github.com/MP-David/sabor-local/pkgs/container/sabor-local) |
+| Releases e tags | [Releases](https://github.com/MP-David/sabor-local/releases) |
+| Aplicação publicada | https://mp-david.github.io/sabor-local/ |
 
 **Vídeo de apresentação:** _(link do vídeo)_
 
