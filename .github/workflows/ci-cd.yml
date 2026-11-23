@@ -94,7 +94,7 @@ jobs:
 
       - name: Dependency Review (novas dependências do PR)
         if: github.event_name == 'pull_request'
-        uses: actions/dependency-review-action@v5.0.0
+        uses: actions/dependency-review-action@v5.0.1
         with:
           fail-on-severity: high
           comment-summary-in-pr: on-failure
